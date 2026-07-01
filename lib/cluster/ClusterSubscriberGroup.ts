@@ -176,9 +176,26 @@ export default class ClusterSubscriberGroup {
       const hasFailedSubscribers = this.hasUnhealthySubscribers();
 
       if (!hasTopologyChanged && !hasFailedSubscribers) {
-        debug(
-          "No topology change detected or failed subscribers. Skipping reset.",
-        );
+        // A recovery that preserves node identity (e.g. a failover or shard
+        // failure where the Redis Enterprise proxy/endpoint is reused, or a
+        // promoted replica keeps the same address) reports an unchanged slot
+        // map, and the subscriber's connection to the proxy stays "ready" - so
+        // hasUnhealthySubscribers() is false. But the server-side sharded
+        // subscription can be lost across that recovery, leaving the client
+        // believing it is still subscribed while no messages arrive.
+        // Re-issue ssubscribe (idempotent for already-subscribed channels) so
+        // delivery reliably resumes. Only meaningful when channels exist.
+        if (this.channels.size > 0) {
+          debug(
+            "No topology change / no failed subscribers; ensuring resubscription for %d slot group(s).",
+            this.channels.size,
+          );
+          this._resubscribe();
+        } else {
+          debug(
+            "No topology change detected or failed subscribers. Skipping reset.",
+          );
+        }
         return;
       }
 
