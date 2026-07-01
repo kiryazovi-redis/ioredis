@@ -22,6 +22,8 @@ export default class ClusterSubscriberGroup {
   private subscriberToSlotsIndex: Map<string, number[]> = new Map();
   private channels: Map<number, Array<string | Buffer>> = new Map();
   private failedAttemptsByNode: Map<string, number> = new Map();
+  // TEMP-INSTRUMENTATION: distinguishes the two subscriber clients in a shared log
+  private readonly grp = Math.random().toString(36).slice(2, 6);
 
   // Only latest pending reset kept; throttled by refreshSlotsCache's isRefreshing + backoff delay
   private isResetting = false;
@@ -174,6 +176,22 @@ export default class ClusterSubscriberGroup {
     try {
       const hasTopologyChanged = this._refreshSlots(clusterSlots);
       const hasFailedSubscribers = this.hasUnhealthySubscribers();
+
+      // TEMP-INSTRUMENTATION (unconditional so it shows in CI without DEBUG)
+      // eslint-disable-next-line no-console
+      console.error(
+        `[INSTR ${this.grp}] RESET tc=${hasTopologyChanged} fs=${hasFailedSubscribers} ch=${this.channels.size} | ` +
+          Array.from(this.shardedSubscribers.entries())
+            .map(
+              ([k, s]) =>
+                `${k}=${s.subscriberStatus}/${
+                  s.getInstance() ? s.getInstance().status : "null"
+                }/h${s.isHealthy() ? 1 : 0}${
+                  this.subscriberToSlotsIndex.has(k) ? "" : "/NOSLOT"
+                }`,
+            )
+            .join(" "),
+      );
 
       if (!hasTopologyChanged && !hasFailedSubscribers) {
         // A recovery that preserves node identity (e.g. a failover or shard
@@ -368,12 +386,24 @@ export default class ClusterSubscriberGroup {
                 }
 
                 if (redis.status === "ready") {
+                  // eslint-disable-next-line no-console
+                  console.error(
+                    `[INSTR ${this.grp}] RESUB-NOW ${nodeKey} slot=${ss} ch=${channels.join(",")}`,
+                  );
                   redis.ssubscribe(...channels).catch((err) => {
                     // TODO: Should we emit an error event here?
                     debug("Failed to ssubscribe on node %s: %s", nodeKey, err);
                   });
                 } else {
+                  // eslint-disable-next-line no-console
+                  console.error(
+                    `[INSTR ${this.grp}] RESUB-DEFER ${nodeKey} slot=${ss} status=${redis.status} ch=${channels.join(",")}`,
+                  );
                   redis.once("ready", () => {
+                    // eslint-disable-next-line no-console
+                    console.error(
+                      `[INSTR ${this.grp}] RESUB-AFTER-READY ${nodeKey} slot=${ss}`,
+                    );
                     redis.ssubscribe(...channels).catch((err) => {
                       // TODO: Should we emit an error event here?
                       debug(
