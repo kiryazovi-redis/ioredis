@@ -149,11 +149,22 @@ export default class ShardedSubscriber {
   }
 
   isHealthy(): boolean {
+    if (this.instance === null) {
+      return false;
+    }
+    // A CONNECTED subscriber can have its underlying socket silently dropped by a
+    // failover/topology change without a clean "end"/"error" event, leaving our
+    // status at CONNECTED. Subscribers are created with retryStrategy=null (the
+    // group owns reconnection), so such a connection never returns to "ready" on
+    // its own and a deferred re-ssubscribe would wait forever. Treat it as
+    // unhealthy unless the connection is actually ready, so reset() replaces it
+    // with a freshly started subscriber and re-establishes the subscriptions.
+    if (this.status === SubscriberStatus.CONNECTED) {
+      return this.instance.status === "ready";
+    }
     return (
-      (this.status === SubscriberStatus.IDLE ||
-        this.status === SubscriberStatus.CONNECTED ||
-        this.status === SubscriberStatus.STARTING) &&
-      this.instance !== null
+      this.status === SubscriberStatus.IDLE ||
+      this.status === SubscriberStatus.STARTING
     );
   }
 
