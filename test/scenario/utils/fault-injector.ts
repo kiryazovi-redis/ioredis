@@ -332,9 +332,15 @@ export class FaultInjectorClient {
       } catch (error) {
         lastError = error;
 
+        // The db_busy signal arrives in two shapes: a JSON error body
+        // (`"error_code":"db_busy"`) when the HTTP call is rejected directly,
+        // and a raw Python traceback (`error_code: db_busy`) when the async
+        // delete_database action fails and surfaces via waitForAction. Match
+        // both so a database still recovering from a shard-failure fault is
+        // retried instead of failing the teardown.
         if (
           !(error instanceof Error) ||
-          !error.message.includes('"error_code":"db_busy"') ||
+          !/db_busy/.test(error.message) ||
           attempt === retryCount
         ) {
           throw error;
